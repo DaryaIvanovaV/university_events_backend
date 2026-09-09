@@ -1,0 +1,42 @@
+{
+  "dataset": "data\\test_messages.json",
+  "measured_at": "2026-09-01T23:35:12",
+  "runs": [
+    {
+      "model": "gemma3:4b",
+      "num_ctx": 0,
+      "warmup_s": 12.9,
+      "vram_share": 0.46,
+      "size_gb": 3.47,
+      "median_s": 17.0,
+      "max_s": 23.0,
+      "total_s": 532.3,
+      "announcements_ok": 22,
+      "announcements": 22,
+      "traps_clean": 5,
+      "traps": 10,
+      "individual_found": 3,
+      "individual": 3,
+      "total_events": 30,
+      "json_failures": 0
+    },
+    {
+      "model": "gemma3:1b",
+      "num_ctx": 0,
+      "warmup_s": 4.5,
+      "vram_share": 1.0,
+      "size_gb": 0.88,
+      "median_s": 3.9,
+      "max_s": 4.5,
+      "total_s": 135.9,
+      "announcements_ok": 22,
+      "announcements": 22,
+      "traps_clean": 0,
+      "traps": 10,
+      "individual_found": 3,
+      "individual": 3,
+      "total_events": 35,
+      "json_failures": 0
+    }
+  ]
+}

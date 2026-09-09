@@ -1,0 +1,23 @@
+# --- Ядро (потрібно завжди) ---
+pydantic>=2.6
+pydantic-settings>=2.2
+sqlalchemy>=2.0
+alembic>=1.13          # міграції схеми; create_all не вміє ALTER
+httpx>=0.27
+tzdata                 # база часових поясів: її немає ні у Windows, ні в slim-образах
+
+# --- API ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# --- Інгестація Telegram (Bot API) ---
+aiogram>=3.4            # бот-адмін: live-захоплення нових дописів + картки модерації
+
+# --- Push-сповіщення ---
+firebase-admin>=6.5     # FCM
+
+# --- PostgreSQL (prod). Для dev на SQLite не обов'язковий ---
+psycopg[binary]>=3.1
+
+# --- Dev / тести ---
+pytest>=8.0

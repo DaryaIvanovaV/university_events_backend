@@ -1,0 +1,38 @@
+# Віртуальне оточення
+.venv/
+venv/
+
+# Секрети: реальний пароль БД і токен бота. У репозиторій не йдуть —
+# шаблони лежать у .env.example і .env.docker.example
+.env
+.env.docker
+
+# Локальні бази даних
+*.db
+*.db.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# Результати прогонів перевірки промта (генеруються, важать мегабайти).
+# УВАГА: цінне з reports/ продубльовано в data/labels/ і data/baselines/ —
+# саме воно відстежується git і переїжджає на інші машини.
+reports/
+
+# Ваги моделей і чекпоїнти навчання: сотні мегабайт, у git не місце.
+# Готовий GGUF переносити вручну (флешка/хмара).
+models/
+checkpoints/
+*.gguf
+*.safetensors
+
+# Разовий список пакетів для чистки глобального Python
+global_to_remove.txt
+/docs/
+/CLAUDE.md

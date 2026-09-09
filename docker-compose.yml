@@ -1,0 +1,155 @@
+# Розгортання системи: PostgreSQL + API + воркер (+ бот за профілем).
+#
+# Запуск:
+#   cp .env.docker.example .env.docker      # заповнити пароль і ключі
+#   docker compose --env-file .env.docker up -d --build
+#   docker compose --env-file .env.docker logs -f worker
+#
+# Прапорець --env-file обов'язковий. Причина неочевидна: `env_file:` усередині
+# сервісу віддає змінні ЗАПУЩЕНОМУ КОНТЕЙНЕРУ, а підстановки виду
+# ${POSTGRES_PASSWORD} у самому цьому файлі Compose бере з оточення оболонки або
+# з `.env`. Без прапорця пароль не підставиться в рядок підключення. Перевірка є:
+# якщо POSTGRES_PASSWORD не задано, Compose відмовиться стартувати зі зрозумілою
+# помилкою, а не підніме базу з порожнім паролем.
+#
+# Ollama за замовчуванням НЕ в контейнері: вона вже налаштована на хості й
+# використовує GPU напряму. Контейнери ходять до неї через host.docker.internal.
+# Переїзд у контейнер — два рядки в .env.docker, див. сервіс `ollama` внизу.
+
+name: eventparser
+
+services:
+  db:
+    # Debian-версія, а не alpine: musl в alpine обмежено підтримує
+    # локалі, а база в нас україномовна.
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-events}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?вкажіть POSTGRES_PASSWORD у .env.docker}
+      POSTGRES_DB: ${POSTGRES_DB:-events}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      # ВАЖЛИВО: /var/lib/postgresql, а НЕ /var/lib/postgresql/data.
+      # В образах postgres 18+ дані лежать у підкаталозі з номером мажорної
+      # версії, щоб працював pg_upgrade --link. Зі старим шляхом контейнер
+      # відмовляється стартувати: «there appears to be PostgreSQL data in
+      # /var/lib/postgresql/data (unused mount/volume)».
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # Від цієї проби залежить порядок старту: api чекає готовності БД, а не
+      # просто «контейнер запущено» — postgres приймає з'єднання не одразу.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-events} -d ${POSTGRES_DB:-events}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env.docker
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-events}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-events}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Міграції накочує тільки цей контейнер — див. docker-entrypoint.sh.
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    extra_hosts:
+      # На Docker Desktop (Windows/macOS) ім'я є за замовчуванням; на Linux —
+      # тільки з цим рядком. Через нього контейнер бачить Ollama на хості.
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: .env.docker
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-events}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-events}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        # Чекаємо, поки api накотить міграції: без таблиці ingest_jobs воркеру
+        # нема чого опитувати. service_started, а не healthy — інакше воркер
+        # чекав би ще й на проходження healthcheck без жодної потреби.
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # HEALTHCHECK із Dockerfile стукає в порт 8000, а воркер вебсервера
+      # не тримає — без скасування він би назавжди вважався unhealthy.
+      disable: true
+    # Воркер завершує поточну задачу за SIGTERM (див. app/worker.py).
+    # Даємо йому на це час, інакше задача застрягне в processing до
+    # спливання lease-таймауту.
+    stop_grace_period: 60s
+
+  bot:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
+    restart: unless-stopped
+    # Профіль: без BOT_TOKEN бот безглуздий, тому за замовчуванням не піднімається.
+    # Запуск разом з рештою: docker compose --profile bot up -d
+    profiles: ["bot"]
+    command: ["python", "-m", "app.ingestion.aiogram_bot"]
+    env_file: .env.docker
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-events}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-events}
+      # Усередині compose-мережі API доступний за іменем сервісу.
+      API_BASE_URL: http://api:8000
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      # Бот теж не вебсервер — див. коментар у воркера.
+      disable: true
+
+  # --- Опційно: Ollama в контейнері ---
+  #
+  # За замовчуванням вимкнена профілем: модель уже стоїть на хості й працює на
+  # GPU. Переїзд у контейнер, коли знадобиться:
+  #   1) у .env.docker: OLLAMA_BASE_URL=http://ollama:11434
+  #   2) docker compose --profile ollama up -d
+  #   3) один раз завантажити модель:
+  #      docker compose exec ollama ollama pull gemma3:4b
+  #
+  # Без блоку deploy нижче модель рахує на CPU — це в рази повільніше
+  # (десятки секунд на повідомлення замість 3–6). Для GPU потрібен NVIDIA
+  # Container Toolkit; на Windows він працює через WSL2.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  pgdata:
+  ollama:

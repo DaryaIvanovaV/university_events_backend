@@ -1,0 +1,37 @@
+# Накладення для розробки. Підключається ЯВНО, щоб звичайний запуск лишався
+# «бойовим»:
+#
+#   docker compose --env-file .env.docker \
+#     -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Що додає:
+#   * код примонтовано з хоста — правка файлу видна без перезбірки образу;
+#   * uvicorn з --reload, воркер перезапускається вручну
+#     (docker compose restart worker);
+#   * порт Postgres проброшено назовні, щоб ходити psql/DBeaver'ом з хоста.
+
+services:
+  db:
+    ports:
+      # 5433, а не 5432: на хості вже слухає локально встановлений
+      # PostgreSQL 18, і порт був би зайнятий.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+
+  api:
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      # Тільки вихідники. Віртуальне оточення живе в /opt/venv і монтуванням
+      # не зачіпається — інакше контейнер втратив би встановлені пакети.
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./migrations:/app/migrations
+
+  worker:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+
+  bot:
+    volumes:
+      - ./app:/app/app
