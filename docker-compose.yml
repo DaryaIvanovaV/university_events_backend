@@ -63,6 +63,12 @@ services:
         condition: service_healthy
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      # Ключ Firebase для push (FCM_CREDENTIALS_PATH=/run/secrets/fcm.json).
+      # Тільки api: push шле approve і підписку на теми веде /devices/*, воркер
+      # і бот Firebase не чіпають. Каталог, а не файл: якщо secrets/fcm.json
+      # немає, Docker створить порожній каталог, а не спробує змонтувати файл.
+      - ./secrets:/run/secrets:ro
     extra_hosts:
       # На Docker Desktop (Windows/macOS) ім'я є за замовчуванням; на Linux —
       # тільки з цим рядком. Через нього контейнер бачить Ollama на хості.

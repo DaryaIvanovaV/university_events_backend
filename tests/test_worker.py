@@ -16,7 +16,8 @@ import pytest
 from app import worker
 from app.db import crud, jobs as jobs_repo
 from app.llm.extractor import EventExtractor
-from app.models.db import JOB_DONE, JOB_FAILED, JOB_QUEUED
+from app.models.db import JOB_DONE, JOB_FAILED, JOB_QUEUED, Event
+from app.models.schemas import ExtractedEvent
 from app.services.pipeline import Pipeline
 
 ANNOUNCEMENT = "Запрошуємо на конференцію AI 1 вересня о 10:00, аудиторія 101"
@@ -160,6 +161,32 @@ def test_run_once_releases_batch_on_shutdown(db_session, monkeypatch):
     assert stats["processing"] == 0
     assert stats["queued"] == 2
     assert all(j.attempts == 0 for j in jobs_repo.list_jobs(db_session))
+
+
+def test_run_cleanup_expires_past_events(db_session, monkeypatch):
+    """Воркер прибирає минулі події своїм проходом (app/db/retention.py)."""
+    monkeypatch.setattr(worker, "SessionLocal", lambda: db_session)
+    ev, _ = crud.upsert_event(
+        db_session,
+        ExtractedEvent(event_title="Минула подія", date=dt.date(2020, 1, 1)),
+        source_channel="@cs", source_message_id=10,
+    )
+    crud.set_event_status(db_session, ev.id, "approved")
+
+    result = worker.run_cleanup()
+
+    assert result is not None
+    assert result.expired_ids == [ev.id]
+    assert db_session.get(Event, ev.id) is None  # дата давня → ще й видалено
+
+
+def test_run_cleanup_survives_database_error(db_session, monkeypatch):
+    """Збій прибирання не має валити цикл воркера."""
+    def _boom():
+        raise RuntimeError("БД недоступна")
+
+    monkeypatch.setattr(worker, "SessionLocal", _boom)
+    assert worker.run_cleanup() is None
 
 
 def test_serialize_skipped_keeps_full_event(db_session):

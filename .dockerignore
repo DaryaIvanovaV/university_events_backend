@@ -8,6 +8,10 @@ venv/
 .env
 .env.docker
 
+# Ключ Firebase. Dockerfile робить `COPY . .`, тож без цього рядка ключ потрапив
+# би в шар образу. У контейнер api його монтує docker-compose.yml (read-only).
+secrets/
+
 # Локальні бази і бекапи
 *.db
 *.db.bak

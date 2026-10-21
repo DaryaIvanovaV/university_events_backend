@@ -51,7 +51,9 @@ WORKDIR /app
 COPY --chown=app:app . .
 
 COPY --chown=app:app docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# sed: страховка від CRLF, якщо скрипт знову потрапить у збірку з Windows-кінцями рядків
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER app
 

@@ -1,0 +1,4 @@
+# Shell-скрипти виконуються в Linux-контейнері: CRLF у шебангу дає
+# «exec /usr/local/bin/docker-entrypoint.sh: no such file or directory».
+# Без цього правила core.autocrlf=true на Windows віддає їх із CRLF.
+*.sh text eol=lf

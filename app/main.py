@@ -214,7 +214,8 @@ def get_events(
     response: Response,
     session: Session = Depends(get_session),
     status_: str = Query(
-        "approved", alias="status", pattern="^(approved|pending|rejected|all)$",
+        "approved", alias="status",
+        pattern="^(approved|pending|rejected|expired|all)$",
         description="Публичный фид приложения = approved",
     ),
     upcoming: bool = Query(False, description="Только будущие события"),
@@ -251,7 +252,8 @@ def sync_events(
     Инкрементальная синхронизация для мобильного приложения.
 
     Отдаёт два списка: `changed` — опубликованные события, изменившиеся с
-    момента `since`, и `removed` — id тех, что модератор отклонил. Второй
+    момента `since`, и `removed` — id тех, что модератор отклонил либо что
+    прибрала автоочистка прошедших событий (статус expired). Второй
     список принципиален: без него приложение с локальным кэшем продолжало бы
     показывать отменённое мероприятие, а в календаре вуза это худший вид
     ошибки — студент придёт к закрытой аудитории.
@@ -276,7 +278,7 @@ def sync_events(
     # Оба статуса — одним упорядоченным потоком, чтобы курсор был один и
     # продвигался согласованно (см. crud.changed_since).
     rows = crud.changed_since(
-        session, after, statuses=("approved", "rejected"), limit=limit
+        session, after, statuses=("approved", "rejected", "expired"), limit=limit
     )
     has_more = len(rows) == limit
     next_cursor = (
@@ -292,8 +294,11 @@ def sync_events(
         has_more=has_more,
         changed=[ev for ev in rows if ev.status == "approved"],
         # Отклонённые отдаём только идентификаторами: содержимое клиенту
-        # не нужно, ему достаточно знать, что запись пора убрать.
-        removed=[ev.id for ev in rows if ev.status == "rejected"],
+        # не нужно, ему достаточно знать, что запись пора убрать. Сюда же
+        # попадают expired — события, прибранные автоочисткой как прошедшие
+        # (app/db/retention.py): для кэша приложения это то же самое
+        # «запись больше не показывать».
+        removed=[ev.id for ev in rows if ev.status != "approved"],
     )
 
 

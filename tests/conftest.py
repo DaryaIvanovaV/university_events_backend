@@ -42,14 +42,17 @@ def client(engine, db_session, monkeypatch):
     """
     TestClient с подменённой сессией БД.
 
-    Три подмены обязательны:
+    Четыре подмены обязательны:
       * init_db — иначе lifespan создал бы таблицы в реальном ./events.db,
         то есть тесты писали бы в рабочую базу разработчика;
       * main.engine — его напрямую использует проба /health/ready, минуя
         зависимость get_session;
       * ключи API — их могли задать в локальном .env, и тогда все запросы
         в тестах отвечали бы 401. Проверка самой аутентификации живёт в
-        tests/test_api_security.py и включает ключи явно.
+        tests/test_api_security.py и включает ключи явно;
+      * fcm_credentials_path — при настоящем ключе в .env approve и
+        /devices/register ушли бы в живой Firebase и разослали push
+        подписчикам темы conferences.
     """
     from fastapi.testclient import TestClient
 
@@ -61,6 +64,7 @@ def client(engine, db_session, monkeypatch):
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(settings, "ingest_api_key", "", raising=False)
     monkeypatch.setattr(settings, "admin_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "fcm_credentials_path", "", raising=False)
 
     main.app.dependency_overrides[get_session] = lambda: db_session
     with TestClient(main.app) as test_client:

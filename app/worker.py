@@ -16,6 +16,7 @@
       → забрать пачку (claim, FOR UPDATE SKIP LOCKED)
       → обработать каждую задачу пайплайном
       → mark_done / mark_failed (с паузой перед повтором)
+      → раз в cleanup_interval_s — прибирання минулих подій (run_cleanup)
       → пауза worker_poll_interval_s
 
 Воркеров можно запустить несколько (`docker compose up --scale worker=2`):
@@ -36,6 +37,7 @@ import time
 
 from app.config import settings
 from app.db import jobs as jobs_repo
+from app.db import retention
 from app.db.database import SessionLocal
 from app.llm import ollama_status
 from app.llm.extractor import EventExtractor, make_ollama_chat_fn
@@ -148,6 +150,37 @@ def run_once(pipeline: Pipeline, *, worker_id: str) -> int:
         session.close()
 
 
+def run_cleanup() -> retention.CleanupResult | None:
+    """
+    Прохід автоочищення минулих подій (`app/db/retention.py`).
+
+    Живе у воркері, а не в API: HTTP-шар не повинен виконувати фонову
+    роботу, а окремий планувальник (cron, Task Scheduler) додав би ще одну
+    річ, яку треба налаштувати на кожній машині й у Docker окремо.
+
+    Своя сесія і свій try: прибирання не повинне ні ламати цикл черги, ні
+    отримати в спадок транзакцію, зіпсовану попередньою задачею.
+    """
+    session = None
+    try:
+        session = SessionLocal()
+        result = retention.cleanup(session)
+    except Exception:
+        if session is not None:
+            session.rollback()
+        logger.exception("Прибирання минулих подій не вдалося; повтор пізніше")
+        return None
+    finally:
+        if session is not None:
+            session.close()
+    if result.touched:
+        logger.info(
+            "Прибирання: протерміновано %s, видалено остаточно %s",
+            len(result.expired_ids), result.purged,
+        )
+    return result
+
+
 def _warmup(pipeline: Pipeline) -> None:
     """Прогрев модели до первой задачи — иначе её оплатит первое сообщение."""
     if not settings.ollama_warmup_on_startup:
@@ -182,7 +215,18 @@ def main() -> None:
     )
     _warmup(pipeline)
 
+    # None — перший прохід прибирання виконуємо одразу після старту, а не
+    # через cleanup_interval_s: інакше після рестарту контейнера минулі
+    # події висіли б у фіді ще годину.
+    last_cleanup: float | None = None
+
     while not _shutdown.is_set():
+        if settings.cleanup_interval_s > 0 and (
+            last_cleanup is None
+            or time.monotonic() - last_cleanup >= settings.cleanup_interval_s
+        ):
+            run_cleanup()
+            last_cleanup = time.monotonic()
         try:
             handled = run_once(pipeline, worker_id=worker_id)
         except Exception:

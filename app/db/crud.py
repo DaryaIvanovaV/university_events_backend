@@ -336,7 +336,7 @@ def status_counts(session: Session) -> dict[str, int]:
             select(Event.status, func.count()).group_by(Event.status)
         )
     }
-    for status in ("pending", "approved", "rejected"):
+    for status in ("pending", "approved", "rejected", "expired"):
         counts.setdefault(status, 0)
     counts["total"] = sum(
         v for k, v in counts.items() if k != "total"
